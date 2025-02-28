@@ -1,6 +1,6 @@
-# ArXiv Paper Processor
+# ArXiv Paper Summarizer
 
-This project implements an automated pipeline for fetching, storing, and processing academic papers from ArXiv's AI category. The pipeline is deployed on Google Cloud Platform using Cloud Composer (managed Apache Airflow).
+This project implements an automated pipeline for fetching, storing, processing, and summarizing academic papers from ArXiv's AI category. The system processes PDFs into summaries and provides on-demand relevance analysis for specific research topics.
 
 ## Architecture
 
@@ -8,21 +8,34 @@ The system consists of three main components:
 
 1. **Paper Fetching**: Daily fetching of new AI papers from ArXiv's RSS feed
 2. **Storage**: Papers are stored in Google Cloud Storage with metadata in MongoDB Atlas
-3. **Processing**: Future feature for paper summarization (in development)
+3. **Text Extraction**: PDFs are processed to extract their text content
+4. **Summarization**: Papers are summarized using LLMs (Ollama/Mistral)
+5. **Relevance Analysis**: On-demand analysis of paper relevance to specific research topics
 
 ## Cloud Infrastructure
 
 - **Cloud Composer**: Manages the Airflow DAG workflow
 - **Google Cloud Storage**: Stores PDF files (`arxiv-pdf-storage` bucket)
 - **MongoDB Atlas**: Stores paper metadata
+- **Local Ollama**: Runs LLMs for summarization and relevance analysis.
 
 ## DAG Structure
 
 The DAG (`arxiv_paper_dag.py`) runs daily and consists of three tasks:
 
-1. `fetch_papers`: Downloads new papers from ArXiv's RSS feed
+1. `fetch_pdfs`: Downloads new papers from ArXiv's RSS feed
 2. `upload_to_gcs`: Uploads PDFs to Google Cloud Storage
 3. `store_in_mongodb`: Stores metadata in MongoDB Atlas
+
+## Pipeline Structure
+
+The pipeline consists of multiple steps:
+1. `fetch_pdfs`: Downloads new papers from ArXiv's RSS feed
+2. `upload_to_gcs`: Uploads PDFs to Google Cloud Storage
+3. `store_in_mongodb`: Stores metadata in MongoDB Atlas
+4. `pdf_processor`: Extracts text from PDFs and stores it in MongoDB
+5. `summarizer`: Generates summaries of papers using LLMs and stores them in MongoDB
+6. `relevance_analysis`: Generates relevance scores for stored papers using topic key words
 
 ## Setup Requirements
 
@@ -35,6 +48,10 @@ The DAG (`arxiv_paper_dag.py`) runs daily and consists of three tasks:
 - MongoDB Atlas cluster
 - Database user credentials
 - Network access configured
+
+### Local LLM Setup
+- Ollama installed locally
+- Mistral model pulled: ollama pull mistral
 
 ### Environment Variables
 The following Airflow variables need to be set in Cloud Composer:
@@ -78,7 +95,9 @@ Papers are stored in MongoDB with the following structure:
   {
     "paper_id": "unique_arxiv_id",
     "title": "paper_title",
-    "gcs_url": "gs://bucket-name/arxiv_papers/paper_id.pdf"
+    "gcs_url": "gs://bucket-name/arxiv_papers/paper_id.pdf",
+    "extracted_text": "full paper text content",
+    "summary": "structured summary of the paper"
   }
   ```
 
@@ -97,6 +116,7 @@ To request access to:
 - Google Cloud SDK
 - Access to MongoDB Atlas cluster
 - Access to GCP project
+- Ollama installed locally
 
 ### Initial Setup
 
@@ -126,11 +146,52 @@ GOOGLE_APPLICATION_CREDENTIALS=path/to/your/credentials.json
 # MongoDB Configuration
 MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net
 MONGO_DB_NAME=arxiv_papers
-MONGO_COLLECTION_NAME=papers_metadata
+MONGO_COLLECTION_NAME=arxiv_papers.papers_metadata
 
 # Arxiv Configuration
 ARXIV_RSS_FEED=https://rss.arxiv.org/rss/cs.ai
+
+# LLM Configuration
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=mistral
+RELEVANCE_THRESHOLD=6.0
 ```
+
+### Usage
+
+#### Running the Pipeline
+
+1. Start Ollama in a separate terminal:
+   ```bash
+   ollama serve
+   ```
+
+2. Run the full pipeline:
+   ```bash
+   python -m arxiv_paper_summarizer.paper_pipeline
+   ```
+
+3. Process specific steps:
+   ```bash
+   # Only process PDFs
+   python -m arxiv_paper_summarizer.paper_pipeline --process --pdf-limit 20
+
+   # Only generate summaries
+   python -m arxiv_paper_summarizer.paper_pipeline --summarize --summary-limit 10
+   
+   # Re-summarize papers
+   python -m arxiv_paper_summarizer.paper_pipeline --summarize --force-summarize
+   ```
+
+#### Finding Relevant Papers
+
+To find papers relevant to specific research topics:
+
+```bash
+python -m arxiv_paper_summarizer.summarization.relevance_analyzer --topics "quantum computing, machine learning" --limit 20
+```
+
+This analyzes papers on-demand and returns those relevant to the specified topics, without storing relevance scores in the database.
 
 ### Running Airflow Locally
 
@@ -198,14 +259,9 @@ In the Airflow UI:
 3. Trigger a test run
 4. Monitor logs in the Airflow UI
 
-## Future Features
-
-- Paper summarization using NLP
-- Full-text search capabilities
-- Web interface for paper browsing
-
 ## Notes
 
+- This project can be run with the Airflow capabilities, or by using the pdfs already stored in the cloud.
 - The DAG runs daily to fetch new papers
 - PDFs are temporarily stored in Cloud Composer's managed bucket before being moved to the final GCS location
 - MongoDB connection requires specific configuration in Cloud Composer
